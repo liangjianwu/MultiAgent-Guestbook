@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.local
+nohup.out
+*.log
+.subagents/
+qa-output/*.log
+review-output/*.log
+pm-output/*.log
