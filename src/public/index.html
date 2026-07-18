@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>简易留言板</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f5f7fa; color: #333; min-height: 100vh; display: flex; justify-content: center; padding: 40px 16px; }
+    .container { width: 100%; max-width: 600px; }
+    h1 { font-size: 28px; text-align: center; margin-bottom: 30px; color: #2c3e50; }
+    .form-card { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 24px; }
+    label { display: block; font-size: 14px; color: #666; margin-bottom: 4px; }
+    input[type="text"], textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; outline: none; transition: border 0.2s; }
+    input[type="text"]:focus, textarea:focus { border-color: #3498db; }
+    textarea { height: 100px; resize: vertical; margin-bottom: 12px; }
+    button[type="submit"] { background: #3498db; color: #fff; border: none; padding: 10px 28px; border-radius: 6px; font-size: 15px; cursor: pointer; transition: background 0.2s; }
+    button[type="submit"]:hover { background: #2980b9; }
+    .hint { font-size: 12px; color: #aaa; margin-top: -6px; margin-bottom: 14px; text-align: right; }
+    h3 { font-size: 18px; margin-bottom: 12px; color: #2c3e50; }
+    .msg-card { background: #fff; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 6px rgba(0,0,0,0.06); margin-bottom: 12px; transition: box-shadow 0.2s; position: relative; }
+    .msg-card:hover { box-shadow: 0 3px 14px rgba(0,0,0,0.12); }
+    .msg-author { font-weight: bold; color: #8e44ad; margin-bottom: 6px; }
+    .msg-content { line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .msg-time { font-size: 12px; color: #bbb; text-align: right; margin-top: 8px; }
+    .delete-btn { position: absolute; top: 12px; right: 14px; background: none; border: 1px solid #e74c3c; color: #e74c3c; border-radius: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+    .delete-btn:hover { background: #e74c3c; color: #fff; }
+    .empty { text-align: center; color: #aaa; padding: 40px 0; font-size: 15px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>📝 简易留言板</h1>
+
+  <!-- 留言表单 -->
+  <form class="form-card" id="guestForm">
+    <label for="author">姓名</label>
+    <input type="text" id="author" placeholder="请输入您的姓名" required maxlength="20">
+
+    <label for="content">留言内容</label>
+    <p class="hint"><span id="charCount">0</span>/500</p>
+    <textarea id="content" placeholder="说点什么吧..." required maxlength="500"></textarea>
+    <button type="submit">发布留言</button>
+  </form>
+
+  <!-- 消息列表 -->
+  <h3>最新留言（<span id="msgCount">0</span>条）</h3>
+  <div id="messageList">
+    <p class="empty">留言板暂无内容，快来成为第一个留言的人吧～</p>
+  </div>
+</div>
+
+<script>
+const form = document.getElementById('guestForm');
+const authorInput = document.getElementById('author');
+const contentInput = document.getElementById('content');
+const charCountEl = document.getElementById('charCount');
+const messageList = document.getElementById('messageList');
+const msgCountEl = document.getElementById('msgCount');
+
+// 字数统计
+contentInput.addEventListener('input', () => {
+  charCountEl.textContent = contentInput.value.length;
+});
+
+// 页面加载时获取消息列表
+document.addEventListener('DOMContentLoaded', fetchMessages);
+
+// 监听表单提交
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const author = authorInput.value.trim();
+  const content = contentInput.value.trim();
+  if (!author || !content) return;
+
+  try {
+    // POST /messages - always check res.ok for 4xx/5xx before treating as success (issue #1 fix)
+    const postRes = await fetch('/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author, content })
+    });
+    if (!postRes.ok) throw new Error('server responded ' + postRes.status);
+
+    form.reset();
+    charCountEl.textContent = '0';
+    await fetchMessages();
+  } catch (err) {
+    alert(err.message || '提交失败，请重试');
+  }
+
+});
+
+// event delegation — click on messageList, act only when target is a delete-btn
+messageList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.delete-btn');
+  if (!btn) return;
+  const rawId = btn.dataset.id;
+  if (!rawId) return;
+  let id;
+  try {
+    // msg.id may be numeric; validate and coerce to a number
+    const cleaned = String(rawId).trim();
+    if (cleaned === '' || !/^\d+$/.test(cleaned)) throw new Error('invalid');
+    id = Number(cleaned);
+  } catch (err) {
+    console.warn('[delete] invalid message-id in data-id:', rawId, err.message);
+    return;
+  }
+  await deleteMessage(id);
+});
+
+// 获取消息列表并渲染
+async function fetchMessages() {
+  try {
+    const res = await fetch('/messages');
+    if (!res.ok) throw new Error('网络错误');
+    const messages = await res.json();
+    renderMessages(messages);
+  } catch (err) {
+    messageList.innerHTML = '<p class="empty">加载失败，请刷新重试～</p>';
+  }
+}
+
+// 渲染消息列表（降序：最新的在前面）
+function renderMessages(messages) {
+  // Sort descending by created_at (newest first). Fall back to stable `0` when created_at is missing — backend should always provide it per DB schema + default (issue #3 fix).
+  const sorted = [...messages].sort((a, b) => {
+    if (!a.created_at && !b.created_at) return 0;                    // both fallback: keep original order for stability
+    if (!a.created_at) return 1;                                      // a missing, put it after b
+    if (!b.created_at) return -1;                                     // b missing, put it before a
+    const ta = new Date(a.created_at).getTime() | 0;                  // fallback 0 only when parsed date is still invalid (defensive)
+    const tb = new Date(b.created_at).getTime() | 0;
+    return tb - ta;                                                   // descending: newer first
+  });
+  msgCountEl.textContent = sorted.length;
+
+  if (sorted.length === 0) {
+    messageList.innerHTML = '<p class="empty">留言板暂无内容，快来成为第一个留言的人吧～</p>';
+    return;
+  }
+
+  messageList.innerHTML = sorted.map(msg => `
+    <div class="msg-card" id="msg-${escapeHtml(msg.id)}">
+      <button class="delete-btn" data-id="${escapeHtml(String(msg.id))}">删除</button>
+      <div class="msg-author">👤 ${escapeHtml(msg.author || '匿名')}</div>
+      <div class="msg-content">${escapeHtml(msg.content)}</div>
+      <div class="msg-time">🕐${formatTime(msg.created_at || msg.createdAt)}</div>
+    </div>
+  `).join('');
+}
+
+// 删除单条消息（带二次确认）
+async function deleteMessage(id) {
+  if (!confirm('确定要删除这条留言吗？')) return;
+  try {
+    const res = await fetch(`/messages/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      document.getElementById(`msg-${id}`)?.remove();
+      // 重新获取并更新计数
+      const listRes = await fetch('/messages');
+      if (listRes.ok) {
+        const msgs = await listRes.json();
+        msgCountEl.textContent = msgs.length;
+        if (msgs.length === 0) messageList.innerHTML = '<p class="empty">留言板暂无内容，快来成为第一个留言的人吧～</p>';
+      }
+    } else {
+      alert('删除失败');
+    }
+  } catch {
+    alert('网络错误，请重试');
+  }
+}
+
+// HTML转义防XSS
+function escapeHtml(str) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return String(str).replace(/[&<>"']/g, m => map[m]);
+}
+
+// 格式化时间
+function formatTime(dt) {
+  if (!dt) return '';
+  const d = new Date(dt);
+  if (isNaN(d.getTime())) return dt;
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+</script>
+</body>
+</html>
